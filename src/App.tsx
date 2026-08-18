@@ -26,23 +26,42 @@ import { SettingsPage } from "./pages/Settings";
 import { toast } from "./components/ui";
 
 const disconnectedSlots = (): SeedMailbox[] =>
-  demoMailboxes().map((m) => ({ ...m, status: "disconnected", tokenRef: undefined, connectedAt: undefined }));
+  demoMailboxes().map((m) => ({ ...m, address: "", status: "disconnected", tokenRef: undefined, connectedAt: undefined }));
 
 export default function App() {
   const [page, setPage] = useState<PageId>("preflight");
   const [settings, setSettings] = usePersistentState<Settings>(K.settings, defaultSettings);
-  const [mailboxes, setMailboxes] = usePersistentState<SeedMailbox[]>(K.mailboxes, demoMailboxes);
+  const [mailboxes, setMailboxes] = usePersistentState<SeedMailbox[]>(K.mailboxes, disconnectedSlots);
   const [applications, setApplications] = usePersistentState<JobApplication[]>(
     K.applications,
-    demoApplications
+    () => []
   );
-  const [runs, setRuns] = usePersistentState<PreflightRun[]>(K.runs, () => [demoRun()]);
+  const [runs, setRuns] = usePersistentState<PreflightRun[]>(K.runs, () => []);
   const [running, setRunning] = useState(false);
   const [consoleDraft, setConsoleDraft] = useState<Partial<PreflightInput> | null>(null);
   const [backend, setBackend] = useState<BackendHealth | null>(null);
 
   useEffect(() => {
     void probeBackend().then(setBackend);
+  }, []);
+
+  // The first generated UI shipped with seeded demonstration records. Remove
+  // those exact placeholders once so they cannot be mistaken for real links.
+  useEffect(() => {
+    const sampleAddresses = new Set(demoMailboxes().map((mailbox) => mailbox.address));
+    const hasSampleConnection = mailboxes.some(
+      (mailbox) => mailbox.status === "connected" && sampleAddresses.has(mailbox.address)
+    );
+    if (!hasSampleConnection) return;
+    setMailboxes(disconnectedSlots());
+    setSettings((current) => ({
+      ...current,
+      allowlist: current.allowlist.filter((address) => !sampleAddresses.has(address)),
+    }));
+    setApplications([]);
+    setRuns([]);
+  // This is a one-time migration for the known demo data.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const connected = mailboxes.filter((m) => m.status === "connected").length;

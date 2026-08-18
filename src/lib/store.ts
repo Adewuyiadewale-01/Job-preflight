@@ -50,12 +50,7 @@ export const defaultSettings = (): Settings => ({
   dmarcNoneAs: "review",
   attachmentMaxMb: 10,
   followUpBusinessDays: 5,
-  allowlist: [
-    "preflight.inbox@gmail.com",
-    "preflight.tests@outlook.com",
-    "pf.seedbox@yahoo.com",
-    "preflight@janedoe.dev",
-  ],
+  allowlist: [],
 });
 
 export const PROVIDER_META: Record<
