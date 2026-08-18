@@ -124,7 +124,8 @@ export function buildApp(deps: AppDeps) {
     res.json(repo.listRuns().map((r) => ({ ...r, log: undefined })));
   });
   app.get("/api/preflight/runs/:id", (req: Request, res: Response) => {
-    const run = repo.getRun(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const run = id ? repo.getRun(id) : undefined;
     if (!run) return res.status(404).json({ error: "Run not found." });
     res.json(run);
   });
@@ -314,12 +315,13 @@ class LazyImapClient implements ImapLike {
     try {
       const seq = await client.search(query as never);
       const out: Array<{ uid: number; headers: Map<string, string[]>; folder: string }> = [];
-      for (const uidNum of seq) {
+      for (const uidNum of seq || []) {
         const msg = await client.fetchOne(
           String(uidNum),
           { headers: ["authentication-results", "received-spf", "date"] },
           { uid: true }
         );
+        if (!msg) continue;
         out.push({ uid: uidNum, headers: (msg.headers as never) ?? new Map(), folder });
       }
       return out;

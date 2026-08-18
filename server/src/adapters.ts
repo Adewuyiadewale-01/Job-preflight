@@ -40,6 +40,12 @@ export interface MailProviderAdapter {
 
 export const sha256Of = (buf: Uint8Array) => createHash("sha256").update(buf).digest("hex");
 
+interface GmailMessagePart {
+  filename?: string;
+  body?: { size?: number; attachmentId?: string };
+  parts?: GmailMessagePart[];
+}
+
 /* ------------------------------------------------------------------ */
 /* Gmail — REST API                                                    */
 /* ------------------------------------------------------------------ */
@@ -82,16 +88,16 @@ export class GmailAdapter implements MailProviderAdapter {
         .map((h) => `${h.name}: ${h.value}`)
         .join("\n");
       const attachments: ReceivedAttachment[] = [];
-      const walk = (part: { filename?: string; mimeType?: string; body?: { size?: number; attachmentId?: string } }) => {
+      const walk = async (part: GmailMessagePart): Promise<void> => {
         if (part.filename && part.body?.attachmentId) {
-          return this.api(`/messages/${m.id}/attachments/${part.body.attachmentId}`).then((att) => {
-            const buf = Buffer.from(att.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-            attachments.push({ filename: part.filename!, size: buf.length, sha256: sha256Of(buf) });
-          });
+          const att = await this.api(`/messages/${m.id}/attachments/${part.body.attachmentId}`);
+          const data = typeof att.data === "string" ? att.data : "";
+          const buf = Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+          attachments.push({ filename: part.filename, size: buf.length, sha256: sha256Of(buf) });
         }
-        return Promise.all((part as { parts?: typeof part[] }).parts?.map(walk) ?? []);
+        await Promise.all(part.parts?.map(walk) ?? []);
       };
-      await walk(full.payload);
+      await walk((full.payload ?? {}) as GmailMessagePart);
       return {
         providerMessageId: m.id,
         folder,
