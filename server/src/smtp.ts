@@ -60,7 +60,11 @@ export async function sendPreflightPackage(deps: SmtpDeps, args: SendPreflightAr
         return { filename: a.name, content, contentType: "application/pdf" };
       }),
     });
-    return { accepted: info.accepted ?? to, messageId: info.messageId ?? "" };
+    // nodemailer typings vary across versions (string[] vs (string|Address)[]
+    // vs any) — normalize defensively to plain strings.
+    const acceptedRaw: unknown = info?.accepted;
+    const accepted = Array.isArray(acceptedRaw) ? acceptedRaw.map((x) => String(x)) : to;
+    return { accepted, messageId: String(info?.messageId ?? "") };
   } finally {
     transport.close?.();
   }

@@ -49,12 +49,14 @@ export class GmailAdapter implements MailProviderAdapter {
   readonly simulated = false;
   constructor(private accessToken: string, private fetchImpl: typeof fetch = fetch) {}
 
-  private async api(path: string) {
+  private async api(path: string): Promise<Record<string, any>> {
     const res = await this.fetchImpl(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, {
       headers: { Authorization: `Bearer ${this.accessToken}` },
     });
     if (!res.ok) throw new Error(`Gmail API ${res.status}: ${await res.text()}`);
-    return res.json();
+    // Provider payloads are heterogeneous; keep access loose inside this
+    // adapter only — the orchestrator consumes strictly typed FoundSeedMessage.
+    return (await res.json()) as Record<string, any>;
   }
 
   async findSeedMessage(testId: string, opts: { sinceIso: string }): Promise<FoundSeedMessage | null> {
@@ -111,12 +113,12 @@ export class OutlookAdapter implements MailProviderAdapter {
   readonly simulated = false;
   constructor(private accessToken: string, private fetchImpl: typeof fetch = fetch) {}
 
-  private async graph(path: string) {
+  private async graph(path: string): Promise<Record<string, any>> {
     const res = await this.fetchImpl(`https://graph.microsoft.com/v1.0/me${path}`, {
       headers: { Authorization: `Bearer ${this.accessToken}` },
     });
     if (!res.ok) throw new Error(`Graph API ${res.status}: ${await res.text()}`);
-    return res.json();
+    return (await res.json()) as Record<string, any>;
   }
 
   async findSeedMessage(testId: string, opts: { sinceIso: string }): Promise<FoundSeedMessage | null> {

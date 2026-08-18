@@ -28,7 +28,7 @@ import {
   evaluateSeed,
   parseAuthenticationResults,
 } from "../../shared/verdict";
-import { enforceAllowlist, makeTestId, normalizeEmail, seededSubject, uid } from "../../shared/strings";
+import { makeTestId, normalizeEmail, seededSubject, uid } from "../../shared/strings";
 import type { MailProviderAdapter } from "./adapters";
 import type { Repository, StoredMailbox } from "./db";
 import type { SendResult } from "./smtp";
@@ -66,10 +66,15 @@ export interface StartRunArgs {
 
 export function createRunRecord(args: StartRunArgs, settings: Settings): PreflightRun {
   const testId = makeTestId();
-  const recipients = enforceAllowlist(
-    args.mailboxes.filter((m) => m.status === "connected").map((m) => m.address),
-    settings.allowlist
-  );
+  // Strict intersection: ONLY connected mailboxes whose address is allowlisted
+  // become recipients. Anything else is labelled as skipped in the report —
+  // and the SMTP sender itself still throws on any non-allowlisted address,
+  // so a non-seed recipient can never reach the transport.
+  const allowSet = new Set(settings.allowlist.map(normalizeEmail));
+  const recipients = args.mailboxes
+    .filter((m) => m.status === "connected")
+    .map((m) => normalizeEmail(m.address))
+    .filter((a) => allowSet.has(a));
   return {
     id: uid("run"),
     testId,
@@ -244,25 +249,32 @@ export async function executePreflightRun(
     persist();
   }
 
-  /* ---- 5: combined verdict with the shared rules ---- */
-  const unlisted = args.mailboxes.filter(
-    (m) => m.status === "connected" && !run.recipients.includes(normalizeEmail(m.address))
-  );
-  for (const box of unlisted) {
+  /* ---- 5: label every mailbox that was not checked ----
+     Disconnected mailboxes and connected-but-not-allowlisted mailboxes both
+     become explicit skip results, so the combined verdict always reports them
+     as uncheckable providers (→ Review needed) instead of silently ignoring
+     them. */
+  for (const box of args.mailboxes) {
+    if (run.seedResults.some((r) => r.mailboxId === box.id)) continue;
+    const reason =
+      box.status !== "connected"
+        ? "mailbox not connected"
+        : "address not in TEST_RECIPIENT_ALLOWLIST";
     run.seedResults.push({
       mailboxId: box.id,
       provider: box.provider,
       address: box.address,
       checkable: false,
-      skipReason: "address not in TEST_RECIPIENT_ALLOWLIST",
+      skipReason: reason,
       delivery: null,
       folder: null,
       latencySec: null,
       auth: null,
       attachments: [],
-      steps: [step("gate", "Allowlist gate", "skip", "not allowlisted")],
+      steps: [step("gate", "Preflight gate", "skip", reason)],
       outcome: "skip",
     });
+    log(`${box.provider} ${box.address}: skipped — ${reason}`);
   }
 
   const report: VerdictReport = computeVerdict(run.seedResults, settings);

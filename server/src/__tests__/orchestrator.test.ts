@@ -32,17 +32,17 @@ const mailbox = (id: string, provider: "gmail" | "outlook" | "yahoo", address: s
   tokenEnc: "enc.v1:x",
 });
 
-function buildDeps(scripts: Record<string, MockScript>) {
+function buildDeps(scripts: Record<string, MockScript>, activeSettings: Settings = settings) {
   const repo = new MemoryRepository();
   let now = 1_000_000;
   const adapters: Record<string, MockAdapter> = {};
   const deps = {
     repo,
-    settings,
+    settings: activeSettings,
     send: async () => {
       Object.values(adapters).forEach((a) => a.markSent());
       now += 50;
-      return { accepted: settings.allowlist, messageId: "mock-msg-1" };
+      return { accepted: activeSettings.allowlist, messageId: "mock-msg-1" };
     },
     adapterFor: (m: StoredMailbox): MailProviderAdapter | null => adapters[m.id] ?? null,
     sleep: async (ms: number) => {
@@ -144,6 +144,35 @@ describe("live preflight orchestrator (mock adapters, fake clock)", () => {
     expect(done.report?.verdict).toBe("review");
     expect(done.report?.reasons.some((r) => r.code === "NON_PRIMARY_PLACEMENT")).toBe(true);
     expect(done.report?.reasons.some((r) => r.code === "PROVIDER_UNCHECKABLE")).toBe(true);
+  });
+
+  it("verdict REVIEW: a connected mailbox missing from the allowlist is never sent to, and is reported as uncheckable", async () => {
+    const strictSettings: Settings = { ...settings, allowlist: ["seed1@gmail.com", "seed2@outlook.com"] };
+    const boxes = [
+      mailbox("m1", "gmail", "seed1@gmail.com"),
+      mailbox("m2", "outlook", "seed2@outlook.com"),
+      mailbox("m3", "yahoo", "seed3@yahoo.com"), // connected, but NOT allowlisted
+    ];
+    const { deps } = buildDeps(
+      {
+        m1: { deliverAfterMs: 600, folder: "inbox", authHeaders: MOCK_PASS_HEADERS, attachments: [{ filename: "resume.pdf", size: pdf.length, sha256: pdfSha }] },
+        m2: { deliverAfterMs: 600, folder: "inbox", authHeaders: MOCK_PASS_HEADERS, attachments: [{ filename: "resume.pdf", size: pdf.length, sha256: pdfSha }] },
+      },
+      strictSettings
+    );
+    const run = createRunRecord({ input, payloads: new Map(), mailboxes: boxes }, strictSettings);
+    // The non-allowlisted seed is excluded from recipients up front.
+    expect(run.recipients).toEqual(["seed1@gmail.com", "seed2@outlook.com"]);
+    const done = await executePreflightRun(run, { input, payloads: new Map(), mailboxes: boxes }, deps);
+    expect(done.report?.verdict).toBe("review");
+    expect(
+      done.report?.reasons.some(
+        (r) => r.code === "PROVIDER_UNCHECKABLE" && r.message.includes("seed3@yahoo.com")
+      )
+    ).toBe(true);
+    const m3 = done.seedResults.find((r) => r.mailboxId === "m3");
+    expect(m3?.checkable).toBe(false);
+    expect(m3?.skipReason).toContain("ALLOWLIST");
   });
 
   it("blocks the whole run when the send gate rejects a recipient", async () => {
