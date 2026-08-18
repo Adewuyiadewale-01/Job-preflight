@@ -113,12 +113,27 @@ For the full server build (Next.js App Router + Prisma + SQLite):
 
 ## Git workflow
 
+Target repository: `https://github.com/Adewuyiadewale-01/job-mailboxes-preflight`
+
+One-shot setup — initializes the repo, creates small logical commits
+(scaffold → core logic → engine → tests → UI → pages → wiring/docs),
+adds the remote and pushes:
+
 ```bash
-git init
+bash scripts/git-setup.sh
+```
+
+Or manually:
+
+```bash
+git init -b main
 git add -A && git commit -m "mail preflight console"
-git remote add origin <your-github-repo-url>
+git remote add origin https://github.com/Adewuyiadewale-01/job-mailboxes-preflight.git
 git push -u origin main
 ```
+
+`.gitignore` already excludes `.env`, `dev.db`, `node_modules` and uploaded
+resumes — verify with `git status` before pushing.
 
 ## Limitations
 
