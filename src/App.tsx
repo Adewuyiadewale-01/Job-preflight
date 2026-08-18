@@ -15,6 +15,9 @@ import {
   K,
   usePersistentState,
 } from "./lib/store";
+import { useEffect } from "react";
+import type { BackendHealth } from "./lib/types";
+import { probeBackend } from "./lib/api";
 import { Layout } from "./components/Layout";
 import { PreflightPage } from "./pages/Preflight";
 import { ApplicationsPage } from "./pages/Applications";
@@ -36,6 +39,11 @@ export default function App() {
   const [runs, setRuns] = usePersistentState<PreflightRun[]>(K.runs, () => [demoRun()]);
   const [running, setRunning] = useState(false);
   const [consoleDraft, setConsoleDraft] = useState<Partial<PreflightInput> | null>(null);
+  const [backend, setBackend] = useState<BackendHealth | null>(null);
+
+  useEffect(() => {
+    void probeBackend().then(setBackend);
+  }, []);
 
   const connected = mailboxes.filter((m) => m.status === "connected").length;
 
@@ -87,7 +95,15 @@ export default function App() {
   };
 
   return (
-    <Layout page={page} onNavigate={setPage} running={running} connected={connected} totalBoxes={mailboxes.length}>
+    <Layout
+      page={page}
+      onNavigate={setPage}
+      running={running}
+      connected={connected}
+      totalBoxes={mailboxes.length}
+      mode={backend ? backend.mode : "offline"}
+      missing={backend?.missing ?? []}
+    >
       {page === "preflight" && (
         <PreflightPage
           mailboxes={mailboxes}
@@ -101,6 +117,7 @@ export default function App() {
           consoleDraft={consoleDraft}
           onDraftConsumed={consumeDraft}
           onPhaseChange={handlePhase}
+          backend={backend}
           hasCompletedRun={runs.some((r) => r.status === "complete")}
         />
       )}

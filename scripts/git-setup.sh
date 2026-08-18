@@ -15,20 +15,24 @@ else
   git init -b main
 
   # 1 — scaffold & configuration
-  git add .gitignore .env.example index.html package.json package-lock.json tsconfig.json vite.config.js vitest.config.ts
+  git add .gitignore .env.example index.html package.json package-lock.json tsconfig.json tsconfig.server.json vite.config.js vitest.config.ts
   git commit -m "chore: scaffold Vite + React + TypeScript + Tailwind project"
 
-  # 2 — core domain logic
-  git add src/lib/types.ts src/lib/utils.ts src/lib/verdict.ts
+  # 2 — shared core domain logic (single source of truth for demo + live)
+  git add shared src/lib/types.ts src/lib/utils.ts src/lib/verdict.ts
   git commit -m "feat(core): recipient allowlist gate, verdict rules, auth-header parsing"
 
-  # 3 — pipeline engine & persistence
+  # 3 — demo pipeline engine & persistence
   git add src/lib/engine.ts src/lib/store.ts
   git commit -m "feat(core): simulated preflight pipeline and persistent local store"
 
-  # 4 — unit tests
+  # 4 — local backend (SMTP, adapters, OAuth, encryption, polling, SQLite)
+  git add server
+  git commit -m "feat(server): live-mode backend with mock adapters and dummy env defaults"
+
+  # 5 — unit tests
   git add src/lib/preflight.test.ts
-  git commit -m "test(core): allowlist, verdict, auth parsing, attachment and mailbox tests"
+  git commit -m "test: allowlist, verdict, auth parsing, SMTP, crypto, OAuth, orchestrator"
 
   # 5 — UI foundation
   git add src/index.css src/main.tsx src/components/ui.tsx src/components/Layout.tsx src/components/RunReport.tsx

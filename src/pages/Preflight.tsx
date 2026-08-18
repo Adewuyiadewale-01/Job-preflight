@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttachmentMeta,
+  BackendHealth,
   JobApplication,
   PreflightInput,
   PreflightRun,
@@ -9,6 +10,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { SCENARIOS, startPreflight, type RunHandle } from "../lib/engine";
+import { fileToBase64, liveRunPreflight } from "../lib/api";
 import {
   cx,
   fmtBytes,
@@ -66,7 +68,9 @@ export function PreflightPage({
   onDraftConsumed,
   onPhaseChange,
   hasCompletedRun,
+  backend,
 }: {
+  backend: BackendHealth | null;
   mailboxes: SeedMailbox[];
   settings: Settings;
   apps: JobApplication[];
@@ -175,6 +179,23 @@ export function PreflightPage({
     },
   ];
 
+  /** True when the local backend executes runs (live SMTP, or labelled mock-dev). */
+  const isLiveBackend = !!backend && backend.mode !== "demo";
+
+  const finishRun = (finished: PreflightRun) => {
+    setLive(finished);
+    setPhase("done");
+    if (finished.status === "complete") {
+      onSaveRun(finished);
+      const v = finished.report?.verdict;
+      if (v === "safe") toast("Preflight passed — safe to send manually", "ok");
+      else if (v === "review") toast("Preflight finished — review needed", "warn");
+      else toast("Preflight finished — do not send", "err");
+    } else {
+      toast("Run cancelled", "warn");
+    }
+  };
+
   const run = () => {
     const input: PreflightInput = {
       employer: employer.trim(),
@@ -186,6 +207,22 @@ export function PreflightPage({
     };
     setPhase("running");
     setLive(null);
+
+    if (isLiveBackend) {
+      void (async () => {
+        try {
+          const payloads: Record<string, string> = {};
+          for (const f of files) payloads[f.file.name] = await fileToBase64(f.file);
+          const finished = await liveRunPreflight(input, payloads, (r) => setLive(r));
+          finishRun(finished);
+        } catch (err) {
+          setPhase("idle");
+          toast(err instanceof Error ? err.message : "The backend refused the run.", "err");
+        }
+      })();
+      return;
+    }
+
     const handle = startPreflight({
       input,
       mailboxes,
@@ -194,19 +231,7 @@ export function PreflightPage({
       emit: (r) => setLive(r),
     });
     ctrlRef.current = handle;
-    handle.promise.then((finished) => {
-      setLive(finished);
-      setPhase("done");
-      if (finished.status === "complete") {
-        onSaveRun(finished);
-        const v = finished.report?.verdict;
-        if (v === "safe") toast("Preflight passed — safe to send manually", "ok");
-        else if (v === "review") toast("Preflight finished — review needed", "warn");
-        else toast("Preflight finished — do not send", "err");
-      } else {
-        toast("Run cancelled", "warn");
-      }
-    });
+    handle.promise.then(finishRun);
   };
 
   const reset = () => {
@@ -424,6 +449,14 @@ export function PreflightPage({
             structurally unreachable from the send path — the final application stays a manual send by you.
           </p>
 
+          {isLiveBackend ? (
+            <div className="mt-4 border-t border-edge pt-4">
+              <p className="flex items-center gap-2 text-[11.5px] text-mut">
+                <IcLock size={12} className="text-grn/80" />
+                Live pipeline active — the backend sends via Zoho SMTP and polls the connected seed inboxes. Scenario injection is disabled for real runs.
+              </p>
+            </div>
+          ) : (
           <div className="mt-4 border-t border-edge pt-4">
             <label className="lbl" htmlFor="pf-scenario">Scenario injector · demo telemetry</label>
             <select id="pf-scenario" className="inp" value={scenario}
@@ -434,6 +467,7 @@ export function PreflightPage({
             </select>
             <p className="mt-1.5 text-[11.5px] text-dim">{scenarioMeta.desc}</p>
           </div>
+          )}
         </section>
       </div>
 
