@@ -300,8 +300,8 @@ export function PreflightPage({
             ))}
           </ol>
           <p className="mt-2.5 pl-2 text-[10.5px] text-dim">
-            Network steps — SMTP send, inbox polling, OAuth — are simulated in this build; the production backend
-            blueprint (Zoho SMTP, Gmail/Graph APIs, IMAP) is documented in the README.
+            In demo mode, the run is simulated. Once live mode is configured, the same screen sends through Zoho SMTP
+            and checks your connected seed inboxes automatically.
           </p>
         </section>
       )}

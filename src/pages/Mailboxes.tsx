@@ -232,7 +232,7 @@ export function MailboxesPage({
             <li className="flex gap-2"><IcLock size={13} className="mt-0.5 shrink-0 text-grn/80" /> Sends go through server-side Zoho SMTP to the strict allowlist only. Non-allowlisted recipients are rejected at the server — employer addresses can never enter the send path.</li>
           </ul>
           <p className="mt-3 rounded-md border border-amb/25 bg-amb/6 px-3 py-2 text-[11.5px] text-amb">
-            Demo note: in this local build the consent round-trip and token exchange are simulated; token refs shown are demo ciphertext.
+            In demo mode, the connection flow is simulated. Live mode uses your local OAuth or IMAP configuration and stores encrypted credentials only on this machine.
           </p>
         </div>
       </section>
