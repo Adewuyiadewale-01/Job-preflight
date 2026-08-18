@@ -101,6 +101,7 @@ export default function App() {
           consoleDraft={consoleDraft}
           onDraftConsumed={consumeDraft}
           onPhaseChange={handlePhase}
+          hasCompletedRun={runs.some((r) => r.status === "complete")}
         />
       )}
       {page === "applications" && (
