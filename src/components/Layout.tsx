@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { PageId } from "../lib/types";
+import type { BackendMode, PageId } from "../lib/types";
 import { cx } from "../lib/utils";
 import {
   IcBrief,
@@ -23,6 +23,8 @@ export function Layout({
   running,
   connected,
   totalBoxes,
+  mode,
+  missing,
   children,
 }: {
   page: PageId;
@@ -30,9 +32,17 @@ export function Layout({
   running: boolean;
   connected: number;
   totalBoxes: number;
+  mode: BackendMode | "offline";
+  missing: string[];
   children: ReactNode;
 }) {
   const current = NAV.find((n) => n.id === page)!;
+  const modeChip =
+    mode === "live"
+      ? { cls: "border-grn/40 bg-grn/10 text-grn", label: "live · zoho smtp", lamp: "ok" as const }
+      : mode === "mock-dev"
+        ? { cls: "border-cy/40 bg-cy/10 text-cy", label: "dev · mocked providers", lamp: "live" as const }
+        : { cls: "border-amb/30 bg-amb/8 text-amb", label: mode === "demo" ? "demo · backend idle" : "demo · no backend", lamp: "warn" as const };
 
   return (
     <div className="relative min-h-screen">
@@ -131,8 +141,15 @@ export function Layout({
               <Lamp state={running ? "live" : "off"} size={7} />
               {running ? "run in progress" : "console idle"}
             </div>
-            <div className="hidden items-center gap-2 rounded-lg border border-amb/30 bg-amb/8 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-amb lg:inline-flex">
-              local demo
+            <div
+              className={cx(
+                "hidden items-center gap-2 rounded-lg border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] lg:inline-flex",
+                modeChip.cls
+              )}
+              title={missing.length ? `Missing for live mode: ${missing.join(", ")}` : undefined}
+            >
+              <Lamp state={modeChip.lamp} size={7} pulse={modeChip.lamp !== "ok"} />
+              {modeChip.label}
             </div>
 
             {/* mobile nav */}
@@ -153,6 +170,50 @@ export function Layout({
             </nav>
           </div>
         </header>
+
+        {/* mode banner — states exactly what a run did */}
+        <div
+          className={cx(
+            "border-b px-4 py-2 md:px-8",
+            mode === "live"
+              ? "border-grn/25 bg-grn/8"
+              : mode === "mock-dev"
+                ? "border-cy/25 bg-cy/8"
+                : "border-amb/25 bg-amb/8"
+          )}
+        >
+          <p className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] leading-relaxed">
+            {mode === "live" ? (
+              <>
+                <Lamp state="ok" size={7} pulse={false} />
+                <span className="font-semibold uppercase tracking-[0.14em] text-grn">Live mode</span>
+                <span className="text-mut">
+                  Preflight runs send through Zoho SMTP and poll your connected seed inboxes. Employer addresses can never be targeted.
+                </span>
+              </>
+            ) : mode === "mock-dev" ? (
+              <>
+                <Lamp state="live" size={7} />
+                <span className="font-semibold uppercase tracking-[0.14em] text-cy">Dev mode — mocked providers</span>
+                <span className="text-mut">
+                  The full pipeline runs locally, but provider responses are simulated. No real email was sent.
+                </span>
+              </>
+            ) : (
+              <>
+                <Lamp state="warn" size={7} pulse={false} />
+                <span className="font-semibold uppercase tracking-[0.14em] text-amb">
+                  Demo mode — no real email was sent.
+                </span>
+                <span className="text-mut">
+                  {mode === "offline"
+                    ? "Start the local backend for live runs: npm run build, then npx tsx server/src/server.ts."
+                    : `Backend is waiting for credentials: ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} (see .env.example).`}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
 
         <main className="mx-auto max-w-[1180px] px-4 py-6 md:px-8 md:py-8">{children}</main>
 

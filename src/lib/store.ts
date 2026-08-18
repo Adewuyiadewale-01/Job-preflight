@@ -14,6 +14,7 @@ export const K = {
   mailboxes: "amp.mailboxes.v1",
   applications: "amp.applications.v1",
   runs: "amp.runs.v1",
+  quickstart: "amp.quickstart.v1",
 };
 
 export function usePersistentState<T>(

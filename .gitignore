@@ -12,6 +12,7 @@ dist/
 dev.db
 dev.db-journal
 prisma/*.db
+data/
 
 # uploaded resumes & preflight artifacts
 uploads/

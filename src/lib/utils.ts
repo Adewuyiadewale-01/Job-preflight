@@ -1,45 +1,14 @@
+/**
+ * Frontend utilities. Pure domain helpers (allowlist gate, test-id subject,
+ * business days, …) live in shared/strings.ts and are shared with the live
+ * backend so demo and live behave identically.
+ */
 import type { Settings } from "./types";
+
+export * from "../../shared/strings";
 
 export const cx = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
-
-export const uid = (prefix: string) =>
-  `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-
-export const makeTestId = () =>
-  `PFT-${Date.now().toString(36).toUpperCase().slice(-6)}-${Math.random()
-    .toString(36)
-    .toUpperCase()
-    .slice(2, 6)}`;
-
-export const seededSubject = (subject: string, testId: string) =>
-  `[TEST ${testId}] ${subject}`;
-
-export const normalizeEmail = (e: string) => e.trim().toLowerCase();
-
-export const isEmailAddress = (e: string) =>
-  /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e.trim());
-
-export class AllowlistError extends Error {
-  rejected: string[];
-  constructor(rejected: string[]) {
-    super(`Recipients rejected by allowlist: ${rejected.join(", ")}`);
-    this.name = "AllowlistError";
-    this.rejected = rejected;
-  }
-}
-
-/**
- * Server-side guard, mirrored here so the console behaves exactly like the
- * production API route: every recipient must appear in the strict allowlist.
- * Throws on ANY non-allowlisted address — nothing is silently filtered.
- */
-export function enforceAllowlist(recipients: string[], allowlist: string[]): string[] {
-  const allowed = new Set(allowlist.map(normalizeEmail));
-  const rejected = recipients.filter((r) => !allowed.has(normalizeEmail(r)));
-  if (rejected.length > 0) throw new AllowlistError(rejected);
-  return recipients.map(normalizeEmail);
-}
 
 export interface FileDescriptor {
   name: string;
@@ -112,39 +81,10 @@ export const fmtDateFull = (iso?: string) => {
 export const fmtClock = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
-export const todayIso = () => new Date().toISOString().slice(0, 10);
-
-/** Add N business days (skipping Sat/Sun) to an ISO date. */
-export function addBusinessDays(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T12:00:00`);
-  let remaining = days;
-  while (remaining > 0) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) remaining -= 1;
-  }
-  return d.toISOString().slice(0, 10);
-}
-
-export function businessDaysBetween(fromIso: string, toIso: string): number {
-  const a = new Date(`${fromIso}T12:00:00`);
-  const b = new Date(`${toIso}T12:00:00`);
-  const sign = b >= a ? 1 : -1;
-  const cur = new Date(a);
-  let count = 0;
-  while ((sign === 1 && cur < b) || (sign === -1 && cur > b)) {
-    cur.setDate(cur.getDate() + sign);
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) count += 1;
-  }
-  return count * sign;
-}
-
-export const shortSha = (sha: string) => `${sha.slice(0, 10)}…${sha.slice(-6)}`;
-
 /**
  * Demo stand-in for the server's AES-256-GCM envelope encryption keyed by
- * APP_ENCRYPTION_KEY. Tokens are wrapped so plaintext never hits storage.
+ * APP_ENCRYPTION_KEY (see server/src/crypto.ts). Tokens are wrapped so
+ * plaintext never hits storage — even in the browser-only demo.
  */
 export const encryptToken = (plain: string) =>
   `enc(v1):${btoa(unescape(encodeURIComponent(plain)))}`;

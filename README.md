@@ -41,11 +41,54 @@ section below maps each simulated step onto its real Next.js + Prisma implementa
 
 ```bash
 npm install
-npm run dev        # local development
+npm run dev        # console only (demo mode) — http://localhost:5173
 npm run build      # production build → dist/
-npx vitest run     # unit tests (allowlist, verdict rules, header parsing,
-                   # attachment validation, mailbox-result handling)
+npx vitest run     # unit tests: allowlist gate, verdict rules, header parsing,
+                   # attachment validation, mailbox-result handling, SMTP sender,
+                   # token encryption, OAuth flows, orchestrator (mock adapters)
 ```
+
+## Local backend — demo vs live mode
+
+The console probes `GET /api/health` on boot and shows a mode banner that states
+exactly what any run did.
+
+| Mode | When | What a run does |
+| --- | --- | --- |
+| **Demo** | no backend, or backend missing env vars | Built-in simulated scenarios. Banner: *"Demo mode — no real email was sent."* |
+| **Mock-dev** | backend started with `MOCK_PROVIDERS=1` | Full real pipeline; provider responses are deterministic fixtures, labelled as mocked. |
+| **Live** | all env vars real **and** seed mailboxes connected | Sends through Zoho SMTP, polls real inboxes via Gmail API / Graph / IMAP. |
+
+```bash
+# 1. build the console once
+npm run build
+
+# 2. start the backend (serves dist/ + /api on one origin)
+npx tsx server/src/server.ts                       # http://localhost:3100
+MOCK_PROVIDERS=1 npx tsx server/src/server.ts      # pipeline with mocked providers
+
+# optional: type-check the server
+npx tsc -p tsconfig.server.json --noEmit
+```
+
+**Live activation checklist** (the server prints what is still missing):
+
+1. Copy `.env.example` → `.env` and add your **Zoho SMTP** app-password
+   (`ZOHO_SMTP_USER`, `ZOHO_SMTP_PASSWORD`, `MAIL_FROM`).
+2. Create OAuth apps and add `GOOGLE_OAUTH_CLIENT_ID/SECRET` (Gmail API,
+   read-only scope) and `MICROSOFT_OAUTH_CLIENT_ID/SECRET` (Graph `Mail.Read`),
+   with redirect URI `http://localhost:3100/api/oauth/<provider>/callback`.
+   Yahoo/Zoho seeds connect via IMAP + app password instead.
+3. Set `TEST_RECIPIENT_ALLOWLIST` to the seed addresses you control and a
+   ≥32-char `APP_ENCRYPTION_KEY`.
+4. Connect seed mailboxes (OAuth start → `/api/oauth/<provider>/start`), then
+   run a preflight from the console.
+
+Backend layout: `server/src/config.ts` (dummy defaults, live gating) ·
+`smtp.ts` (Zoho sender + double allowlist gate) · `adapters.ts` (Gmail /
+Graph / IMAP / mock) · `orchestrator.ts` (polling queue) · `oauth.ts`
+(PKCE flows) · `crypto.ts` (AES-256-GCM token envelopes) · `db.ts`
+(SQLite via sql.js, persisted to git-ignored `data/dev.db`).
 
 First load seeds a demo workspace (two connected seed mailboxes, one historical run, two tracker
 entries). **Settings → Workspace data → Erase everything** starts clean; **Restore demo data** brings

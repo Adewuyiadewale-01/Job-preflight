@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttachmentMeta,
+  BackendHealth,
   JobApplication,
   PreflightInput,
   PreflightRun,
@@ -9,6 +10,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { SCENARIOS, startPreflight, type RunHandle } from "../lib/engine";
+import { fileToBase64, liveRunPreflight } from "../lib/api";
 import {
   cx,
   fmtBytes,
@@ -20,7 +22,7 @@ import {
   validateAttachment,
 } from "../lib/utils";
 import { RunReport } from "../components/RunReport";
-import { PROVIDER_META } from "../lib/store";
+import { K, PROVIDER_META, usePersistentState } from "../lib/store";
 import {
   Btn,
   Chip,
@@ -65,7 +67,10 @@ export function PreflightPage({
   consoleDraft,
   onDraftConsumed,
   onPhaseChange,
+  hasCompletedRun,
+  backend,
 }: {
+  backend: BackendHealth | null;
   mailboxes: SeedMailbox[];
   settings: Settings;
   apps: JobApplication[];
@@ -74,6 +79,7 @@ export function PreflightPage({
   consoleDraft: Partial<PreflightInput> | null;
   onDraftConsumed: () => void;
   onPhaseChange: (phase: "idle" | "running" | "done") => void;
+  hasCompletedRun: boolean;
 }) {
   const [employer, setEmployer] = useState("");
   const [role, setRole] = useState("");
@@ -148,6 +154,48 @@ export function PreflightPage({
   };
   const canRun = Object.values(readiness).every(Boolean) && phase !== "running";
 
+  const [qsOpen, setQsOpen] = usePersistentState<boolean>(K.quickstart, () => true);
+  const connectedCount = mailboxes.filter((m) => m.status === "connected").length;
+  const qsSteps: Array<{ label: string; done: boolean; detail: string }> = [
+    {
+      label: "Connect seed inboxes",
+      done: connectedCount > 0,
+      detail: `${connectedCount}/${mailboxes.length} connected`,
+    },
+    {
+      label: "Confirm the allowlist",
+      done: settings.allowlist.length > 0 && settings.allowlist.length >= connectedCount,
+      detail: `${settings.allowlist.length} address${settings.allowlist.length === 1 ? "" : "es"} cleared`,
+    },
+    {
+      label: "Build the package",
+      done: readiness.employer && readiness.role && readiness.subject && readiness.body && readiness.attachments,
+      detail: readiness.attachments ? `${files.length} PDF hashed` : files.length > 0 ? "hashing / invalid" : "no PDF yet",
+    },
+    {
+      label: "Run & read the verdict",
+      done: hasCompletedRun,
+      detail: hasCompletedRun ? "first verdict archived" : "awaiting first run",
+    },
+  ];
+
+  /** True when the local backend executes runs (live SMTP, or labelled mock-dev). */
+  const isLiveBackend = !!backend && backend.mode !== "demo";
+
+  const finishRun = (finished: PreflightRun) => {
+    setLive(finished);
+    setPhase("done");
+    if (finished.status === "complete") {
+      onSaveRun(finished);
+      const v = finished.report?.verdict;
+      if (v === "safe") toast("Preflight passed — safe to send manually", "ok");
+      else if (v === "review") toast("Preflight finished — review needed", "warn");
+      else toast("Preflight finished — do not send", "err");
+    } else {
+      toast("Run cancelled", "warn");
+    }
+  };
+
   const run = () => {
     const input: PreflightInput = {
       employer: employer.trim(),
@@ -159,6 +207,22 @@ export function PreflightPage({
     };
     setPhase("running");
     setLive(null);
+
+    if (isLiveBackend) {
+      void (async () => {
+        try {
+          const payloads: Record<string, string> = {};
+          for (const f of files) payloads[f.file.name] = await fileToBase64(f.file);
+          const finished = await liveRunPreflight(input, payloads, (r) => setLive(r));
+          finishRun(finished);
+        } catch (err) {
+          setPhase("idle");
+          toast(err instanceof Error ? err.message : "The backend refused the run.", "err");
+        }
+      })();
+      return;
+    }
+
     const handle = startPreflight({
       input,
       mailboxes,
@@ -167,19 +231,7 @@ export function PreflightPage({
       emit: (r) => setLive(r),
     });
     ctrlRef.current = handle;
-    handle.promise.then((finished) => {
-      setLive(finished);
-      setPhase("done");
-      if (finished.status === "complete") {
-        onSaveRun(finished);
-        const v = finished.report?.verdict;
-        if (v === "safe") toast("Preflight passed — safe to send manually", "ok");
-        else if (v === "review") toast("Preflight finished — review needed", "warn");
-        else toast("Preflight finished — do not send", "err");
-      } else {
-        toast("Run cancelled", "warn");
-      }
-    });
+    handle.promise.then(finishRun);
   };
 
   const reset = () => {
@@ -199,7 +251,62 @@ export function PreflightPage({
   const scenarioMeta = SCENARIOS.find((s) => s.id === scenario)!;
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)]">
+    <div className="space-y-5">
+      {qsOpen && phase !== "running" && (
+        <section className="panel anim-rise relative overflow-hidden p-4">
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-cy via-cy/25 to-transparent" />
+          <div className="flex items-start justify-between gap-3 pl-2">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-cy">first run · operating checklist</div>
+              <h3 className="mt-1 font-disp text-[15px] font-bold text-fog">Four steps to your first verdict</h3>
+            </div>
+            <button
+              onClick={() => setQsOpen(false)}
+              className="rounded-md p-1.5 text-dim transition-colors hover:bg-raise hover:text-fog"
+              aria-label="Dismiss quick start checklist"
+            >
+              <IcX size={14} />
+            </button>
+          </div>
+          <ol className="mt-3.5 grid gap-2 pl-2 sm:grid-cols-2 xl:grid-cols-4">
+            {qsSteps.map((s, i) => (
+              <li
+                key={s.label}
+                className={cx(
+                  "flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all duration-200",
+                  s.done
+                    ? "border-grn/25 bg-grn/[0.04] hover:border-grn/40"
+                    : "border-edge bg-pit/40 hover:border-edge2 hover:bg-raise/40"
+                )}
+              >
+                <span
+                  className={cx(
+                    "grid h-6 w-6 shrink-0 place-items-center rounded-full border font-mono text-[10.5px] transition-colors",
+                    s.done ? "border-grn/50 bg-grn/10 text-grn" : "border-edge text-dim"
+                  )}
+                >
+                  {i + 1}
+                </span>
+                <div className="min-w-0">
+                  <div className={cx("text-[12.5px] font-medium leading-tight", s.done ? "text-fog" : "text-mut")}>
+                    {s.label}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-dim">
+                    <Lamp state={s.done ? "ok" : "warn"} size={5} pulse={!s.done} />
+                    {s.detail}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2.5 pl-2 text-[10.5px] text-dim">
+            Network steps — SMTP send, inbox polling, OAuth — are simulated in this build; the production backend
+            blueprint (Zoho SMTP, Gmail/Graph APIs, IMAP) is documented in the README.
+          </p>
+        </section>
+      )}
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)]">
       {/* ------------------------------------------------ left: package form */}
       <div className="space-y-5">
         <section className="panel panel-notch anim-rise p-5">
@@ -342,6 +449,14 @@ export function PreflightPage({
             structurally unreachable from the send path — the final application stays a manual send by you.
           </p>
 
+          {isLiveBackend ? (
+            <div className="mt-4 border-t border-edge pt-4">
+              <p className="flex items-center gap-2 text-[11.5px] text-mut">
+                <IcLock size={12} className="text-grn/80" />
+                Live pipeline active — the backend sends via Zoho SMTP and polls the connected seed inboxes. Scenario injection is disabled for real runs.
+              </p>
+            </div>
+          ) : (
           <div className="mt-4 border-t border-edge pt-4">
             <label className="lbl" htmlFor="pf-scenario">Scenario injector · demo telemetry</label>
             <select id="pf-scenario" className="inp" value={scenario}
@@ -352,6 +467,7 @@ export function PreflightPage({
             </select>
             <p className="mt-1.5 text-[11.5px] text-dim">{scenarioMeta.desc}</p>
           </div>
+          )}
         </section>
       </div>
 
@@ -530,6 +646,7 @@ export function PreflightPage({
             </ol>
           </section>
         )}
+      </div>
       </div>
     </div>
   );
