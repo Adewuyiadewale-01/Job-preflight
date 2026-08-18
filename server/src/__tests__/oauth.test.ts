@@ -51,12 +51,18 @@ describe("OAuth flows", () => {
         JSON.stringify({ access_token: "at-123", refresh_token: "rt-9", expires_in: 3600 }),
         { status: 200 }
       )
-    ) as unknown as typeof fetch;
+    );
 
-    const token = await exchangeCode("gmail", cfg, "auth-code", "verifier", fetchMock);
+    const token = await exchangeCode(
+      "gmail",
+      cfg,
+      "auth-code",
+      "verifier",
+      fetchMock as unknown as typeof fetch
+    );
     expect(token.accessToken).toBe("at-123");
     expect(token.refreshToken).toBe("rt-9");
-    const [calledUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(calledUrl).toBe("https://oauth2.googleapis.com/token");
     expect(String(init.body)).toContain("code=auth-code");
     expect(String(init.body)).toContain("code_verifier=verifier");

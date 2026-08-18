@@ -31,7 +31,7 @@ import {
 } from "./adapters";
 import { sendPreflightPackage, zohoTransportFactory } from "./smtp";
 import { createRunRecord, RunQueue, type StartRunArgs } from "./orchestrator";
-import { uid, isEmailAddress, normalizeEmail } from "../../shared/strings";
+import { uid, isEmailAddress, normalizeEmail, enforceAllowlist } from "../../shared/strings";
 import type { BackendHealth, PreflightInput, Provider, Settings } from "../../shared/types";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -177,15 +177,15 @@ export function buildApp(deps: AppDeps) {
 
   app.get("/api/oauth/:provider/callback", async (req: Request, res: Response) => {
     const provider = req.params.provider as Provider;
-    const state = String(req.query.state ?? "");
-    const code = String(req.query.code ?? "");
+    const state = qstr(req, "state");
+    const code = qstr(req, "code");
     const pending = deps.oauthPending.get(state);
     if (!pending || pending.provider !== provider)
       return res.status(400).send("Invalid OAuth state — restart the connection flow.");
     deps.oauthPending.delete(state);
     try {
       const token = await exchangeCode(provider, config, code, pending.codeVerifier);
-      const address = String(req.query.address ?? `${provider}-seed@connected.local`);
+      const address = qstr(req, "address") || `${provider}-seed@connected.local`;
       const existing = repo.listMailboxes().find((m) => m.provider === provider);
       const box: StoredMailbox = {
         id: existing?.id ?? uid("box"),
@@ -230,6 +230,15 @@ export function buildApp(deps: AppDeps) {
 
 function sealImapCreds(address: string, appPassword: string, config: ServerConfig): string {
   return encryptToken(JSON.stringify({ user: address, pass: appPassword }), config.appEncryptionKey);
+}
+
+/**
+ * Reads a string query parameter regardless of how the active Express typings
+ * model `req.query` (ParsedQs vs URLSearchParams-backed shapes).
+ */
+function qstr(req: Request, key: string): string {
+  const v = (req.query as unknown as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : "";
 }
 
 /** Builds an adapter for a mailbox. Returns null when the mailbox is uncheckable. */
@@ -344,12 +353,19 @@ export async function main() {
   const queue = new RunQueue({
     repo,
     settings: { ...DEFAULT_SETTINGS, ...(repo.getSettings() ?? {}) },
-    send: async (args) => {
-      // Transport is created BEFORE the allowlist-gated send; it is never
-      // handed a non-allowlisted recipient.
-      const transport = await zohoTransportFactory()(config);
-      return sendPreflightPackage({ config, makeTransport: () => transport }, args);
-    },
+    send: config.mockProviders
+      ? async (args) => {
+          // Mock-dev runs the REAL strict allowlist gate but never opens a
+          // socket — the transport is not created at all.
+          const to = enforceAllowlist(args.recipients, config.testRecipientAllowlist);
+          return { accepted: to, messageId: `mock-dev-${args.testId}` };
+        }
+      : async (args) => {
+          // Live: real Zoho SMTP. The sender re-enforces the allowlist before
+          // the transport is handed any recipient.
+          const transport = await zohoTransportFactory()(config);
+          return sendPreflightPackage({ config, makeTransport: () => transport }, args);
+        },
     adapterFor: config.mockProviders
       ? (m, run) => {
           // Mock-dev mirrors the package's expected attachments so the

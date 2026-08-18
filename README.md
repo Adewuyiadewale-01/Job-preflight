@@ -20,32 +20,38 @@ One run produces exactly one automated verdict:
 
 ## Repository note — what this build is
 
-This workspace delivers the **complete product as a local-first TypeScript + React + Vite + Tailwind
-application**. All decision logic is real, pure and unit-tested:
+This workspace delivers the **complete product**: a local-first TypeScript + React + Vite + Tailwind
+console **plus a real local backend** (`server/src/`) that implements the live pipeline. All decision
+logic is real, pure, unit-tested and **shared between demo and live** (`shared/`):
 
-- strict recipient **allowlisting** (throws on any non-allowlisted address),
-- **verdict rules** (`src/lib/verdict.ts`) with configurable thresholds,
+- strict recipient **allowlisting** (the SMTP sender throws on any non-allowlisted address),
+- **verdict rules** (`shared/verdict.ts`) with configurable thresholds,
 - **Authentication-Results / Received-SPF header parsing**,
 - **attachment validation** (PDF-only, size caps, SHA-256),
 - **mailbox-result handling** (received / missing / bounced / delayed, Inbox vs Spam vs Promotions),
 - business-day **follow-up scheduling**.
 
-The pieces that inherently require a server with secrets — live Zoho SMTP sending, real OAuth code
-exchange, live IMAP/Gmail/Graph polling — are executed here through a clearly labeled **simulated
-pipeline** (`src/lib/engine.ts`) with a scenario injector (nominal, promotions, spam trap, silent
-loss, bounce, DMARC missing, DKIM failure, corrupted attachment) so every verdict path and the full
-progress/telemetry UX can be exercised and demonstrated offline. The "Production backend blueprint"
-section below maps each simulated step onto its real Next.js + Prisma implementation.
+The backend implements Zoho SMTP sending, OAuth code exchange (PKCE, read-only scopes), Gmail /
+Microsoft Graph / IMAP mailbox adapters, AES-256-GCM token encryption at rest, a SQLite store and the
+polling orchestrator. Because credentials are added locally by you, every external call is
+dependency-injected: with no credentials the server refuses runs and the console runs its built-in
+**demo engine** (`src/lib/engine.ts`, with a scenario injector); with `MOCK_PROVIDERS=1` the full
+server pipeline runs against deterministic, clearly-labelled fixtures; with real `.env` values it
+goes **live**. No mocked result is ever presented as a live deliverability result — the mode banner
+states what each run did.
 
 ## Quickstart
 
 ```bash
 npm install
-npm run dev        # console only (demo mode) — http://localhost:5173
-npm run build      # production build → dist/
-npx vitest run     # unit tests: allowlist gate, verdict rules, header parsing,
-                   # attachment validation, mailbox-result handling, SMTP sender,
-                   # token encryption, OAuth flows, orchestrator (mock adapters)
+npm run dev                                      # console only (demo mode) — http://localhost:5173
+npm run typecheck                                # frontend type check (tsc --noEmit)
+npx tsc -p tsconfig.server.json --noEmit         # backend type check
+npm run build                                    # production build → dist/
+npx vitest run                                   # unit tests: allowlist gate, verdict rules, header
+                                                 # parsing, attachment validation, mailbox-result
+                                                 # handling, SMTP sender, token encryption, OAuth
+                                                 # flows, orchestrator (mock adapters, fake clock)
 ```
 
 ## Local backend — demo vs live mode
@@ -130,36 +136,53 @@ secret ever reaches the browser bundle.
 
 ### Seed-mailbox OAuth setup (production)
 
-- **Gmail**: Google Cloud project → OAuth client (Web) → redirect `/api/oauth/google/callback` →
-  scope `gmail.readonly`.
-- **Outlook**: Entra app registration → redirect `/api/oauth/microsoft/callback` → `Mail.Read`.
-- **Yahoo**: Yahoo developer app → OAuth; IMAP with an app-specific token is the fallback.
-- **Zoho**: Zoho API console → `ZohoMail.messages.READ`.
-  Tokens are exchanged server-side and encrypted with `APP_ENCRYPTION_KEY` (AES-256-GCM) before
-  storage; the DB holds only an opaque reference.
+- **Gmail**: Google Cloud project → OAuth client (Web) → redirect
+  `http://localhost:3100/api/oauth/gmail/callback` → scope `gmail.readonly`.
+- **Outlook**: Entra app registration → redirect
+  `http://localhost:3100/api/oauth/outlook/callback` → scope `Mail.Read` (no `Mail.Send`).
+- **Yahoo / Zoho**: connect via IMAP + an app-specific password
+  (`POST /api/mailboxes/yahoo|zoho/imap`). Passwords are encrypted with `APP_ENCRYPTION_KEY`
+  (AES-256-GCM) before storage; the DB holds only the opaque envelope, and the browser only ever
+  sees a truncated reference.
 
-## Production backend blueprint
+## Backend API surface (implemented)
 
-For the full server build (Next.js App Router + Prisma + SQLite):
+Served by `npx tsx server/src/server.ts` on `http://localhost:3100` (same origin as the console,
+which it serves from `dist/`):
 
-- `POST /api/preflight` — validates input/attachments (PDF-only, size caps), stores uploads outside
-  public dirs under randomized names, enforces `TEST_RECIPIENT_ALLOWLIST` (rejects everything else),
-  sends via Zoho SMTP with the unique test id, enqueues a poll job.
-- **Polling queue** (e.g. `pg-boss`-style worker or `setInterval` job runner): for each seed, fetch
-  via Gmail API / Microsoft Graph / IMAP, match `X-Preflight-Test-Id`, classify folder
-  (Inbox / Spam / Promotions / Updates), download attachments and compare name/size/SHA-256, parse
-  `Authentication-Results`, then run the same `computeVerdict()` rules shipped in this repo.
-- Prisma models: `Application`, `PreflightRun`, `SeedMailbox` (encrypted `tokenRef`), `Settings`.
-- Never commit `.env`, `dev.db`, tokens or `uploads/` — `.gitignore` already covers them.
-- Docker is optional: a two-stage `node:20` image plus a volume for `dev.db` and `uploads/` works,
-  but plain `npm run dev` is the intended local flow.
+- `GET /api/health` — reports the active mode (`live` / `mock-dev` / `demo`), the env vars still
+  missing for live mode, and the connected-mailbox count.
+- `POST /api/preflight/runs` — refuses in demo mode (409 + the missing-var list); otherwise validates
+  the package (PDF-only, size caps), creates a run record, and enqueues it.
+- `GET /api/preflight/runs`, `GET /api/preflight/runs/:id` — list / poll run progress (the console
+  polls the run document until the verdict lands).
+- `GET /api/oauth/:provider/start` → `GET /api/oauth/:provider/callback` — PKCE authorization-code
+  flows for `gmail` and `outlook`; the exchanged token is encrypted (`APP_ENCRYPTION_KEY`,
+  AES-256-GCM) before storage.
+- `POST /api/mailboxes/:provider/imap` — Yahoo/Zoho connection via app-specific password; the
+  password is encrypted immediately and never stored or returned in plaintext.
+- `GET|PUT /api/settings`, `GET|PUT /api/applications` — thresholds, allowlist and tracker rows.
+
+The polling orchestrator (`server/src/orchestrator.ts`) sends once through the allowlist-gated Zoho
+SMTP sender, then polls each connected, allowlisted seed via its adapter until the message matching
+`X-Preflight-Test-Id` is found or the timeout expires — classifying placement, parsing
+`Authentication-Results`, re-hashing attachments (name/size/SHA-256) and combining everything with
+the same `computeVerdict()` rules the demo engine uses. Mailboxes that were not checked (not
+connected, or connected but not allowlisted) are reported as uncheckable providers, never ignored.
+
+Data lives in SQLite (`data/dev.db` via sql.js — no native build step, git-ignored) behind a
+repository interface that also has an in-memory implementation for the test suite.
+
+- Never commit `.env`, `data/`, tokens or uploaded resumes — `.gitignore` already covers them.
+- Docker is optional: a two-stage `node:20` image plus a volume for `data/` works, but plain
+  `npx tsx server/src/server.ts` is the intended local flow.
 
 ## Git workflow
 
 Target repository: `https://github.com/Adewuyiadewale-01/job-mailboxes-preflight`
 
 One-shot setup — initializes the repo, creates small logical commits
-(scaffold → core logic → engine → tests → UI → pages → wiring/docs),
+(scaffold → shared core → demo engine → local backend → tests → UI → pages → wiring/docs),
 adds the remote and pushes:
 
 ```bash
@@ -183,5 +206,8 @@ resumes — verify with `git status` before pushing.
 - Best-effort only: seed results predict but never guarantee employer-inbox placement.
 - Promotions/category detection depends on what each provider exposes (Gmail API categories,
   Graph well-known folders, IMAP folder names).
-- This build's network steps are simulated; wire the blueprint endpoints for live telemetry.
-- Local browser storage: export your workspace from Settings before clearing site data.
+- **Demo mode** and **mock-dev mode** never send real email and are labelled as such on every run —
+  they exercise the UI and pipeline logic, not live deliverability. Live mode requires your own
+  Zoho SMTP credentials and OAuth apps (see the activation checklist above).
+- Console-only mode keeps its workspace in local browser storage — export it from Settings before
+  clearing site data. When the backend is running, runs/mailboxes/settings persist in `data/dev.db`.
